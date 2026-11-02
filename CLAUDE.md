@@ -8,7 +8,7 @@ This repository contains a Laravel application. Complete the following setup bef
 Verify that PHP and Composer are available:
 
 ```sh
-php -v
+php -v 
 composer -V
 ```
 

@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         body {
-            background-image: url('/sepatuz.png');
+            background-image: url('{{ asset('sepatuz.png') }}');
             background-size: cover; background-position: center; background-attachment: fixed;
             background-color: #e0f7fa;
         }
@@ -31,12 +31,20 @@
             @if(session('error'))
                 <div class="alert alert-danger py-2 small text-center">{{ session('error') }}</div>
             @endif
+            @if(session('success'))
+                <div class="alert alert-success py-2 small text-center">{{ session('success') }}</div>
+            @endif
+            @if($errors->any())
+                <div class="alert alert-danger py-2 small">
+                    @foreach($errors->all() as $pesan)<div>{{ $pesan }}</div>@endforeach
+                </div>
+            @endif
 
-            <form action="/login/proses" method="POST">
+            <form action="{{ route('login.proses') }}" method="POST">
                 @csrf
                 <div class="mb-3">
                     <label class="form-label fw-semibold small">Username</label>
-                    <input type="text" class="form-control" name="email" placeholder="Masukkan username kamu (contoh: admin_satu)" required>
+                    <input type="text" class="form-control" name="username" value="{{ old('username') }}" placeholder="Masukkan username" autofocus required>
                 </div>
 
                 <div class="mb-4">

@@ -1,0 +1,30 @@
+/* Penyesuaian tema Nwazu Kicks (menimpa template Acorn). */
+
+/* Logo teks + emoji sepatu di navbar */
+.nav-container .logo { width: auto; min-width: 0; height: auto; }
+.nav-container .logo a { display: flex; align-items: center; text-decoration: none; }
+.brand-logo {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    color: #fff;
+    font-weight: 700;
+    font-size: 1.4rem;
+    letter-spacing: .3px;
+    white-space: nowrap;
+}
+.brand-emoji { font-size: 1.6rem; line-height: 1; transform: rotate(-8deg); display: inline-block; }
+
+/* Foto profil -> lingkaran inisial */
+.profile-initial {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: #fff;
+    color: #0d9be0;
+    font-weight: 700;
+    font-size: 1.1rem;
+}
