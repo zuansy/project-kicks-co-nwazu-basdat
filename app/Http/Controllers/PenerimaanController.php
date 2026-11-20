@@ -2,9 +2,19 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\Sp;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * Objek database yang dipakai di controller ini (nomor sama dengan database/DAFTAR-SP-FN-TG.md):
+ *  SP 5  sp_buat_penerimaan                (header penerimaan)
+ *  SP 6  sp_tambah_detail_penerimaan        (detail penerimaan)
+ *  SP 7  sp_tutup_penerimaan                (status tuntas/sebagian, pengadaan selesai)
+ *  FN 3  fn_sisa_pesanan                    (sisa pesanan)
+ *  TG 1  trg_after_insert_detail_penerimaan (otomatis: stok masuk ke kartu_stok)
+ */
 class PenerimaanController extends Controller
 {
     public function index()
@@ -13,13 +23,7 @@ class PenerimaanController extends Controller
             ->join('pengadaan as p', 'p.idpengadaan', '=', 'r.idpengadaan')
             ->join('vendor as v', 'v.idvendor', '=', 'p.vendor_idvendor')
             ->join('user as u', 'u.iduser', '=', 'r.iduser')
-            ->select(
-                'r.idpenerimaan',
-                'r.created_at as waktu',
-                'r.idpengadaan',
-                'v.nama_vendor',
-                'u.username'
-            )
+            ->select('r.idpenerimaan', 'r.created_at as waktu', 'r.status', 'r.idpengadaan', 'v.nama_vendor', 'u.username')
             ->orderByDesc('r.idpenerimaan')
             ->paginate(10);
 
@@ -27,8 +31,8 @@ class PenerimaanController extends Controller
     }
 
     /**
-     * Tanpa ?pengadaan=ID  -> pilih pengadaan yang masih terbuka.
-     * Dengan ?pengadaan=ID -> form jumlah barang yang diterima.
+     * Tanpa ?pengadaan=ID  -> pilih pengadaan yang masih berstatus proses.
+     * Dengan ?pengadaan=ID -> isi manual jumlah dan harga terima tiap barang.
      */
     public function create(Request $request)
     {
@@ -37,7 +41,7 @@ class PenerimaanController extends Controller
         if (! $idPengadaan) {
             $terbuka = DB::table('pengadaan as p')
                 ->join('vendor as v', 'v.idvendor', '=', 'p.vendor_idvendor')
-                ->where('p.status', config('inventori.status_pengadaan_baru'))
+                ->where('p.status', config('inventori.status_pengadaan_proses'))
                 ->select('p.idpengadaan', 'p.timestamp as waktu', 'v.nama_vendor', 'p.total_nilai')
                 ->orderByDesc('p.idpengadaan')
                 ->get();
@@ -53,9 +57,21 @@ class PenerimaanController extends Controller
 
         abort_if($pengadaan === null, 404);
 
+        if ($pengadaan->status !== config('inventori.status_pengadaan_proses')) {
+            return redirect()->route('pengadaan.show', $idPengadaan)
+                ->with('error', 'Pengadaan ini sudah selesai, semua barang sudah diterima.');
+        }
+
         return view('penerimaan.create', [
             'pengadaan' => $pengadaan,
-            'detail'    => $this->detailPengadaan((int) $idPengadaan),
+            'detail'    => DB::table('detail_pengadaan as dp')
+                ->join('barang as b', 'b.idbarang', '=', 'dp.idbarang')
+                ->where('dp.idpengadaan', $idPengadaan)
+                ->select(
+                    'dp.idbarang', 'b.nama', 'dp.jumlah', 'dp.harga_satuan',
+                    DB::raw('fn_sisa_pesanan(dp.idpengadaan, dp.idbarang) as sisa') // FN 3: fn_sisa_pesanan
+                )
+                ->get(),
         ]);
     }
 
@@ -65,37 +81,24 @@ class PenerimaanController extends Controller
             'idpengadaan' => ['required', 'integer', 'exists:pengadaan,idpengadaan'],
             'terima'      => ['required', 'array'],
             'terima.*'    => ['nullable', 'integer', 'min:0'],
+            'harga'       => ['required', 'array'],
+            'harga.*'     => ['nullable', 'integer', 'min:0'],
         ]);
-
-        $idPengadaan = (int) $data['idpengadaan'];
-        $detail = $this->detailPengadaan($idPengadaan)->keyBy('idbarang');
 
         $masuk = [];
         foreach ($data['terima'] as $idBarang => $jumlah) {
-            $jumlah = (int) $jumlah;
-            if ($jumlah <= 0) {
+            if ((int) $jumlah <= 0) {
                 continue;
             }
 
-            $baris = $detail->get($idBarang);
-            if ($baris === null) {
+            $harga = $data['harga'][$idBarang] ?? null;
+            if ($harga === null) {
                 return back()->withInput()->withErrors([
-                    'terima' => 'Ada barang yang bukan bagian dari pengadaan ini.',
+                    'harga' => 'Harga satuan terima wajib diisi untuk barang yang diterima.',
                 ]);
             }
 
-            $sisa = (int) $baris->jumlah - (int) $baris->diterima;
-            if ($jumlah > $sisa) {
-                return back()->withInput()->withErrors([
-                    'terima' => 'Jumlah diterima untuk "'.$baris->nama.'" melebihi sisa pesanan ('.$sisa.').',
-                ]);
-            }
-
-            $masuk[] = [
-                'idbarang' => (int) $idBarang,
-                'jumlah'   => $jumlah,
-                'harga'    => (int) $baris->harga_satuan,
-            ];
+            $masuk[] = ['idbarang' => (int) $idBarang, 'jumlah' => (int) $jumlah, 'harga' => (int) $harga];
         }
 
         if ($masuk === []) {
@@ -105,95 +108,68 @@ class PenerimaanController extends Controller
         }
 
         $idUser = $request->session()->get('iduser');
-        $catatStokManual = ! $this->stokDikelolaTrigger();
 
-        $idPenerimaan = DB::transaction(function () use ($idPengadaan, $masuk, $idUser, $catatStokManual) {
-            $idPenerimaan = DB::table('penerimaan')->insertGetId([
-                'created_at'  => now(),
-                'status'      => config('inventori.status_penerimaan'),
-                'idpengadaan' => $idPengadaan,
-                'iduser'      => $idUser,
-            ]);
+        try {
+            $id = DB::transaction(function () use ($data, $masuk, $idUser) {
+                // SP 5: sp_buat_penerimaan — header penerimaan baru (hanya untuk pengadaan berstatus proses)
+                DB::statement('CALL sp_buat_penerimaan(?, ?, @id_baru)', [(int) $data['idpengadaan'], $idUser]);
+                $id = (int) DB::selectOne('SELECT @id_baru AS id')->id;
 
-            foreach ($masuk as $m) {
-                DB::table('detail_penerimaan')->insert([
-                    'idpenerimaan'        => $idPenerimaan,
-                    'barang_idbarang'     => $m['idbarang'],
-                    'jumlah_terima'       => $m['jumlah'],
-                    'harga_satuan_terima' => $m['harga'],
-                    'sub_total_terima'    => $m['jumlah'] * $m['harga'],
-                ]);
-
-                if ($catatStokManual) {
-                    $stokTerakhir = (int) DB::table('kartu_stok')
-                        ->where('idbarang', $m['idbarang'])
-                        ->orderByDesc('idkartu_stok')
-                        ->lockForUpdate()
-                        ->value('stock');
-
-                    DB::table('kartu_stok')->insert([
-                        'jenis_transaksi' => config('inventori.kartu_stok_penerimaan'),
-                        'masuk'           => $m['jumlah'],
-                        'keluar'          => 0,
-                        'stock'           => $stokTerakhir + $m['jumlah'],
-                        'created_at'      => now(),
-                        'idtransaksi'     => $idPenerimaan,
-                        'idbarang'        => $m['idbarang'],
+                // SP 6: sp_tambah_detail_penerimaan — jumlah dan harga terima manual; cek sisa memakai FN 3.
+                // TG 1 (otomatis di database): trg_after_insert_detail_penerimaan mengisi kartu_stok
+                // setiap kali detail penerimaan di-insert oleh SP 6.
+                foreach ($masuk as $m) {
+                    DB::statement('CALL sp_tambah_detail_penerimaan(?, ?, ?, ?)', [
+                        $id, $m['idbarang'], $m['jumlah'], $m['harga'],
                     ]);
                 }
+
+                // SP 7: sp_tutup_penerimaan — tentukan status tuntas/sebagian; bila tuntas pengadaan menjadi selesai
+                DB::statement('CALL sp_tutup_penerimaan(?)', [$id]);
+
+                return $id;
+            });
+        } catch (QueryException $e) {
+            $pesan = Sp::pesan($e);
+            if ($pesan === null) {
+                throw $e;
             }
 
-            // Tutup pengadaan jika semua barang sudah diterima lengkap.
-            $masihAdaSisa = $this->detailPengadaan($idPengadaan)
-                ->contains(fn ($d) => (int) $d->jumlah - (int) $d->diterima > 0);
+            return back()->withInput()->with('error', $pesan);
+        }
 
-            if (! $masihAdaSisa) {
-                DB::table('pengadaan')
-                    ->where('idpengadaan', $idPengadaan)
-                    ->update(['status' => config('inventori.status_pengadaan_selesai')]);
-            }
+        $tuntas = DB::table('penerimaan')->where('idpenerimaan', $id)->value('status')
+            === config('inventori.status_penerimaan_tuntas');
 
-            return $idPenerimaan;
-        });
-
-        return redirect()->route('penerimaan.index')
-            ->with('success', 'Penerimaan #'.$idPenerimaan.' berhasil dicatat.');
+        return redirect()->route('penerimaan.show', $id)->with(
+            'success',
+            $tuntas
+                ? 'Penerimaan tuntas. Pengadaan otomatis selesai dan stok sudah bertambah.'
+                : 'Penerimaan sebagian dicatat. Pengadaan masih proses sampai sisa barang diterima.'
+        );
     }
 
-    /** Baris pengadaan beserta jumlah yang sudah diterima sebelumnya. */
-    private function detailPengadaan(int $idPengadaan)
+    public function show(string $id)
     {
-        $sudahDiterima = DB::table('detail_penerimaan as dt')
-            ->join('penerimaan as pn', 'pn.idpenerimaan', '=', 'dt.idpenerimaan')
-            ->where('pn.idpengadaan', $idPengadaan)
-            ->groupBy('dt.barang_idbarang')
-            ->select('dt.barang_idbarang', DB::raw('SUM(dt.jumlah_terima) as diterima'));
+        $penerimaan = DB::table('penerimaan as r')
+            ->join('pengadaan as p', 'p.idpengadaan', '=', 'r.idpengadaan')
+            ->join('vendor as v', 'v.idvendor', '=', 'p.vendor_idvendor')
+            ->join('user as u', 'u.iduser', '=', 'r.iduser')
+            ->where('r.idpenerimaan', $id)
+            ->select('r.idpenerimaan', 'r.created_at as waktu', 'r.status', 'r.idpengadaan', 'p.status as status_pengadaan', 'v.nama_vendor', 'u.username')
+            ->first();
 
-        return DB::table('detail_pengadaan as dp')
-            ->join('barang as b', 'b.idbarang', '=', 'dp.idbarang')
-            ->leftJoinSub($sudahDiterima, 'rc', 'rc.barang_idbarang', '=', 'dp.idbarang')
-            ->where('dp.idpengadaan', $idPengadaan)
+        abort_if($penerimaan === null, 404);
+
+        $detail = DB::table('detail_penerimaan as d')
+            ->join('barang as b', 'b.idbarang', '=', 'd.barang_idbarang')
+            ->where('d.idpenerimaan', $id)
             ->select(
-                'dp.idbarang',
-                'b.nama',
-                'dp.jumlah',
-                'dp.harga_satuan',
-                DB::raw('COALESCE(rc.diterima, 0) as diterima')
+                'b.nama', 'd.jumlah_terima', 'd.harga_satuan_terima', 'd.sub_total_terima',
+                DB::raw('(SELECT COALESCE(SUM(dr.jumlah), 0) FROM detail_retur dr WHERE dr.iddetail_penerimaan = d.iddetail_penerimaan) as diretur')
             )
             ->get();
-    }
 
-    /**
-     * Jika di database sudah ada trigger AFTER/BEFORE INSERT pada
-     * detail_penerimaan, anggap trigger itulah yang mengisi kartu_stok
-     * -- supaya stok tidak tercatat dua kali.
-     */
-    private function stokDikelolaTrigger(): bool
-    {
-        return DB::table('information_schema.TRIGGERS')
-            ->where('TRIGGER_SCHEMA', DB::getDatabaseName())
-            ->where('EVENT_OBJECT_TABLE', 'detail_penerimaan')
-            ->where('EVENT_MANIPULATION', 'INSERT')
-            ->exists();
+        return view('penerimaan.show', compact('penerimaan', 'detail'));
     }
 }

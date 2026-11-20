@@ -47,6 +47,10 @@
                                                     <span class="badge bg-secondary">Saldo awal</span>
                                                 @elseif ($r->jenis_transaksi === 'M')
                                                     <span class="badge bg-success">Penerimaan #{{ $r->idtransaksi }}</span>
+                                                @elseif ($r->jenis_transaksi === 'J')
+                                                    <span class="badge bg-primary">Penjualan #{{ $r->idtransaksi }}</span>
+                                                @elseif ($r->jenis_transaksi === 'R')
+                                                    <span class="badge bg-danger">Retur #{{ $r->idtransaksi }}</span>
                                                 @else
                                                     <span class="badge bg-warning text-dark">{{ $r->jenis_transaksi }} #{{ $r->idtransaksi }}</span>
                                                 @endif

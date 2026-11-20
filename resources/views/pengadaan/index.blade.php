@@ -35,16 +35,9 @@
                                             <td>{{ $p->nama_vendor }}</td>
                                             <td>{{ $p->username }}</td>
                                             <td class="text-end">Rp {{ number_format($p->total_nilai, 0, ',', '.') }}</td>
-                                            <td>
-                                                @if ($p->status === config('inventori.status_pengadaan_selesai'))
-                                                    <span class="badge bg-success">Selesai</span>
-                                                @else
-                                                    <span class="badge bg-warning text-dark">Menunggu barang</span>
-                                                @endif
-                                            </td>
+                                            <td>@include('partials.status-pengadaan', ['status' => $p->status])</td>
                                             <td class="text-end text-nowrap">
-                                                <a href="{{ route('pengadaan.show', $p->idpengadaan) }}"
-                                                    class="btn btn-sm btn-outline-primary">Detail</a>
+                                                <a href="{{ route('pengadaan.show', $p->idpengadaan) }}" class="btn btn-sm btn-outline-primary">Detail</a>
                                             </td>
                                         </tr>
                                     @empty

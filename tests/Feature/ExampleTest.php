@@ -6,14 +6,15 @@ use Tests\TestCase;
 
 class ExampleTest extends TestCase
 {
-    public function test_tamu_diarahkan_ke_halaman_login(): void
+    public function test_panel_admin_mengarahkan_tamu_ke_login(): void
     {
-        $this->get('/')->assertRedirect('/login');
         $this->get('/barang')->assertRedirect('/login');
+        $this->get('/dashboard')->assertRedirect('/login');
     }
 
-    public function test_halaman_login_bisa_dibuka(): void
+    public function test_halaman_login_dan_daftar_bisa_dibuka(): void
     {
         $this->get('/login')->assertStatus(200);
+        $this->get('/daftar')->assertStatus(200);
     }
 }

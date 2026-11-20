@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Middleware\EnsureLoggedIn;
+use App\Http\Middleware\EnsureRole;
+use App\Http\Middleware\EnsureStaff;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -15,6 +17,8 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'login' => EnsureLoggedIn::class,
+            'staff' => EnsureStaff::class,
+            'peran' => EnsureRole::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

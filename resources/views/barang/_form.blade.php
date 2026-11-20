@@ -30,12 +30,14 @@
 </div>
 
 <div class="mb-3">
-    <label class="form-label" for="harga">Harga Jual (Rp)</label>
+    <label class="form-label" for="harga">Harga Dasar (Rp)</label>
     <input type="number" id="harga" name="harga" min="0" step="1" required
         class="form-control @error('harga') is-invalid @enderror"
         value="{{ old('harga', $b?->harga) }}" placeholder="Contoh: 2500000">
+    <div class="form-text">Harga acuan beli. Harga jual = harga dasar + margin penjualan yang aktif.</div>
 </div>
 
+@if ($b)
 <div class="mb-4">
     <label class="form-label" for="status">Status</label>
     <select id="status" name="status" class="form-select @error('status') is-invalid @enderror" required>
@@ -44,6 +46,12 @@
     </select>
     <div class="form-text">Stok tidak diisi di sini — stok bertambah otomatis lewat menu Penerimaan.</div>
 </div>
+@else
+<div class="mb-4">
+    <div class="form-text">Barang baru otomatis berstatus <strong>Aktif</strong> dengan stok 0. Stok bertambah lewat menu Penerimaan (setelah disetujui).</div>
+</div>
+@endif
+
 
 <div class="d-flex justify-content-end gap-2">
     <a href="{{ route('barang.index') }}" class="btn btn-outline-secondary">Batal</a>

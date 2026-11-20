@@ -23,6 +23,8 @@
                                         <th>Pengadaan</th>
                                         <th>Vendor</th>
                                         <th>Dicatat oleh</th>
+                                        <th>Status</th>
+                                        <th class="text-end">Aksi</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -33,10 +35,14 @@
                                             <td><a href="{{ route('pengadaan.show', $r->idpengadaan) }}">#{{ $r->idpengadaan }}</a></td>
                                             <td>{{ $r->nama_vendor }}</td>
                                             <td>{{ $r->username }}</td>
+                                            <td>@include('partials.status-penerimaan', ['status' => $r->status])</td>
+                                            <td class="text-end">
+                                                <a href="{{ route('penerimaan.show', $r->idpenerimaan) }}" class="btn btn-sm btn-outline-primary">Detail</a>
+                                            </td>
                                         </tr>
                                     @empty
                                         <tr>
-                                            <td colspan="5" class="text-center text-muted py-4">Belum ada penerimaan.</td>
+                                            <td colspan="7" class="text-center text-muted py-4">Belum ada penerimaan.</td>
                                         </tr>
                                     @endforelse
                                 </tbody>

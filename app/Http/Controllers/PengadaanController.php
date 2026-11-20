@@ -2,10 +2,19 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\Sp;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
+/**
+ * Objek database yang dipakai di controller ini (nomor sama dengan database/DAFTAR-SP-FN-TG.md):
+ *  SP 3  sp_buat_pengadaan          (header pengadaan)
+ *  SP 4  sp_tambah_detail_pengadaan  (detail pengadaan, hitung PPN dan total)
+ *  FN 2  fn_hitung_ppn11             (dipanggil di dalam SP 4)
+ *  FN 3  fn_sisa_pesanan             (kolom sisa di halaman detail)
+ */
 class PengadaanController extends Controller
 {
     public function index()
@@ -13,14 +22,7 @@ class PengadaanController extends Controller
         $pengadaan = DB::table('pengadaan as p')
             ->join('vendor as v', 'v.idvendor', '=', 'p.vendor_idvendor')
             ->join('user as u', 'u.iduser', '=', 'p.user_iduser')
-            ->select(
-                'p.idpengadaan',
-                'p.timestamp as waktu',
-                'p.status',
-                'p.total_nilai',
-                'v.nama_vendor',
-                'u.username'
-            )
+            ->select('p.idpengadaan', 'p.timestamp as waktu', 'p.status', 'p.total_nilai', 'v.nama_vendor', 'u.username')
             ->orderByDesc('p.idpengadaan')
             ->paginate(10);
 
@@ -31,57 +33,52 @@ class PengadaanController extends Controller
     {
         return view('pengadaan.create', [
             'vendor'    => DB::table('vendor')->where('status', '1')->orderBy('nama_vendor')->get(),
-            'barang'    => DB::table('barang')->where('status', 1)->orderBy('nama')->get(['idbarang', 'nama']),
+            // harga dasar barang dipakai sebagai harga awal; boleh diubah manual
+            'barang'    => DB::table('barang')->where('status', 1)->orderBy('nama')->get(['idbarang', 'nama', 'harga']),
             'ppnPersen' => (int) config('inventori.ppn_persen'),
+            'minBarang' => (int) config('inventori.min_barang_pengadaan'),
         ]);
     }
 
     public function store(Request $request)
     {
         $data = $request->validate([
-            'vendor_idvendor'  => ['required', 'integer', Rule::exists('vendor', 'idvendor')->where('status', '1')],
-            'item'             => ['required', 'array', 'min:1'],
-            'item.*.idbarang'  => ['required', 'integer', 'exists:barang,idbarang', 'distinct'],
-            'item.*.jumlah'    => ['required', 'integer', 'min:1'],
-            'item.*.harga'     => ['required', 'integer', 'min:0'],
+            'vendor_idvendor' => ['required', 'integer', Rule::exists('vendor', 'idvendor')->where('status', '1')],
+            'item'            => ['required', 'array', 'min:'.(int) config('inventori.min_barang_pengadaan')],
+            'item.*.idbarang' => ['required', 'integer', 'exists:barang,idbarang', 'distinct'],
+            'item.*.jumlah'   => ['required', 'integer', 'min:1'],
+            'item.*.harga'    => ['required', 'integer', 'min:0'],
         ]);
 
-        $subtotal = 0;
-        $baris = [];
-        foreach ($data['item'] as $item) {
-            $sub = (int) $item['jumlah'] * (int) $item['harga'];
-            $subtotal += $sub;
-            $baris[] = [
-                'idbarang'     => (int) $item['idbarang'],
-                'jumlah'       => (int) $item['jumlah'],
-                'harga_satuan' => (int) $item['harga'],
-                'sub_total'    => $sub,
-            ];
-        }
-
-        $ppn = (int) round($subtotal * (int) config('inventori.ppn_persen') / 100);
         $idUser = $request->session()->get('iduser');
 
-        $id = DB::transaction(function () use ($data, $baris, $subtotal, $ppn, $idUser) {
-            $idPengadaan = DB::table('pengadaan')->insertGetId([
-                'timestamp'       => now(),
-                'user_iduser'     => $idUser,
-                'status'          => config('inventori.status_pengadaan_baru'),
-                'vendor_idvendor' => $data['vendor_idvendor'],
-                'subtotal_nilai'  => $subtotal,
-                'ppn'             => $ppn,
-                'total_nilai'     => $subtotal + $ppn,
-            ]);
+        try {
+            $id = DB::transaction(function () use ($data, $idUser) {
+                // SP 3: sp_buat_pengadaan — header pengadaan baru (status P = proses). Vendor dipilih manual.
+                DB::statement('CALL sp_buat_pengadaan(?, ?, @id_baru)', [$idUser, $data['vendor_idvendor']]);
+                $id = (int) DB::selectOne('SELECT @id_baru AS id')->id;
 
-            DB::table('detail_pengadaan')->insert(
-                array_map(fn ($b) => $b + ['idpengadaan' => $idPengadaan], $baris)
-            );
+                // SP 4: sp_tambah_detail_pengadaan — satu panggilan per barang; di dalamnya memanggil
+                // FN 2: fn_hitung_ppn11 untuk PPN 11% otomatis, lalu total dihitung ulang.
+                foreach ($data['item'] as $item) {
+                    DB::statement('CALL sp_tambah_detail_pengadaan(?, ?, ?, ?)', [
+                        $id, (int) $item['idbarang'], (int) $item['jumlah'], (int) $item['harga'],
+                    ]);
+                }
 
-            return $idPengadaan;
-        });
+                return $id;
+            });
+        } catch (QueryException $e) {
+            $pesan = Sp::pesan($e);
+            if ($pesan === null) {
+                throw $e;
+            }
+
+            return back()->withInput()->with('error', $pesan);
+        }
 
         return redirect()->route('pengadaan.show', $id)
-            ->with('success', 'Pengadaan berhasil dicatat.');
+            ->with('success', 'Pengadaan dicatat dengan status proses. Lanjutkan dengan menerima barangnya.');
     }
 
     public function show(string $id)
@@ -90,16 +87,7 @@ class PengadaanController extends Controller
             ->join('vendor as v', 'v.idvendor', '=', 'p.vendor_idvendor')
             ->join('user as u', 'u.iduser', '=', 'p.user_iduser')
             ->where('p.idpengadaan', $id)
-            ->select(
-                'p.idpengadaan',
-                'p.timestamp as waktu',
-                'p.status',
-                'p.subtotal_nilai',
-                'p.ppn',
-                'p.total_nilai',
-                'v.nama_vendor',
-                'u.username'
-            )
+            ->select('p.idpengadaan', 'p.timestamp as waktu', 'p.status', 'p.subtotal_nilai', 'p.ppn', 'p.total_nilai', 'v.nama_vendor', 'u.username')
             ->first();
 
         abort_if($pengadaan === null, 404);
@@ -107,13 +95,18 @@ class PengadaanController extends Controller
         $detail = DB::table('detail_pengadaan as d')
             ->join('barang as b', 'b.idbarang', '=', 'd.idbarang')
             ->where('d.idpengadaan', $id)
-            ->select('b.nama', 'd.jumlah', 'd.harga_satuan', 'd.sub_total')
+            ->select(
+                'b.nama', 'd.jumlah', 'd.harga_satuan', 'd.sub_total',
+                // FN 3: fn_sisa_pesanan — sisa yang belum diterima (dipesan - diterima + diretur)
+                DB::raw('fn_sisa_pesanan(d.idpengadaan, d.idbarang) as sisa')
+            )
             ->get();
 
-        return view('pengadaan.show', [
-            'pengadaan' => $pengadaan,
-            'detail'    => $detail,
-            'selesai'   => $pengadaan->status === config('inventori.status_pengadaan_selesai'),
-        ]);
+        $penerimaan = DB::table('penerimaan')
+            ->where('idpengadaan', $id)
+            ->orderBy('idpenerimaan')
+            ->get(['idpenerimaan', 'created_at as waktu', 'status']);
+
+        return view('pengadaan.show', compact('pengadaan', 'detail', 'penerimaan'));
     }
 }

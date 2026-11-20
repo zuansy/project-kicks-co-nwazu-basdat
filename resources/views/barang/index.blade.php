@@ -30,7 +30,7 @@
                                         <th scope="col">Nama Barang</th>
                                         <th scope="col">Jenis</th>
                                         <th scope="col">Satuan</th>
-                                        <th scope="col" class="text-end">Harga</th>
+                                        <th scope="col" class="text-end">Harga Dasar</th>
                                         <th scope="col" class="text-end">Stok</th>
                                         <th scope="col">Status</th>
                                         <th scope="col" class="text-end">Aksi</th>

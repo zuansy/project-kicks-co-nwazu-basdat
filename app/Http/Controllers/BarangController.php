@@ -4,33 +4,25 @@ namespace App\Http\Controllers;
 
 use App\Models\Barang;
 use App\Models\Satuan;
-use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
+/**
+ * Objek database yang dipakai di controller ini (nomor sama dengan database/DAFTAR-SP-FN-TG.md):
+ *  FN 1  fn_cek_sisa_stok      (kolom stok di daftar barang)
+ *  SP 1  sp_tambah_barang      (tambah barang)
+ *  SP 2  sp_nonaktifkan_barang (hapus = nonaktifkan / soft delete)
+ */
 class BarangController extends Controller
 {
     public function index(Request $request)
     {
         $q = trim((string) $request->query('q', ''));
 
-        // Stok = saldo terakhir per barang dari kartu_stok.
-        $saldoTerakhir = DB::table('kartu_stok as k')
-            ->joinSub(
-                DB::table('kartu_stok')
-                    ->select('idbarang', DB::raw('MAX(idkartu_stok) as last_id'))
-                    ->groupBy('idbarang'),
-                'm',
-                'm.last_id',
-                '=',
-                'k.idkartu_stok'
-            )
-            ->select('k.idbarang', 'k.stock');
-
+        // FN 1: Menggunakan function fn_cek_sisa_stok untuk menampilkan stok
         $barang = DB::table('barang as b')
             ->leftJoin('satuan as s', 's.idsatuan', '=', 'b.idsatuan')
-            ->leftJoinSub($saldoTerakhir, 'st', 'st.idbarang', '=', 'b.idbarang')
             ->select(
                 'b.idbarang',
                 'b.nama as nama_barang',
@@ -38,7 +30,7 @@ class BarangController extends Controller
                 'b.harga',
                 'b.status',
                 's.nama_satuan',
-                DB::raw('COALESCE(st.stock, 0) as stok')
+                DB::raw('fn_cek_sisa_stok(b.idbarang) as stok')
             )
             ->when($q !== '', fn ($query) => $query->where('b.nama', 'like', "%{$q}%"))
             ->orderBy('b.nama')
@@ -58,10 +50,18 @@ class BarangController extends Controller
 
     public function store(Request $request)
     {
-        Barang::create($this->validasi($request));
+        $data = $this->validasi($request, true);
+
+        // SP 1: Memanggil Stored Procedure untuk Tambah Barang (status otomatis aktif, stok 0)
+        DB::statement('CALL sp_tambah_barang(?, ?, ?, ?)', [
+            $data['jenis'],
+            $data['nama'],
+            $data['idsatuan'],
+            $data['harga'],
+        ]);
 
         return redirect()->route('barang.index')
-            ->with('success', 'Barang berhasil ditambahkan.');
+            ->with('success', 'Barang berhasil ditambahkan (via SP).');
     }
 
     public function edit(string $id)
@@ -76,7 +76,7 @@ class BarangController extends Controller
     public function update(Request $request, string $id)
     {
         $barang = Barang::findOrFail($id);
-        $barang->update($this->validasi($request));
+        $barang->update($this->validasi($request, false));
 
         return redirect()->route('barang.index')
             ->with('success', 'Data barang berhasil diperbarui.');
@@ -84,25 +84,11 @@ class BarangController extends Controller
 
     public function destroy(string $id)
     {
-        $barang = Barang::findOrFail($id);
-
-        try {
-            $barang->delete();
-        } catch (QueryException $e) {
-            // 23000 = pelanggaran foreign key (barang sudah dipakai transaksi)
-            if ((string) $e->getCode() !== '23000') {
-                throw $e;
-            }
-
-            return redirect()->route('barang.index')->with(
-                'error',
-                'Barang "'.$barang->nama.'" sudah dipakai di transaksi sehingga tidak bisa dihapus. '
-                .'Ubah statusnya menjadi Nonaktif saja.'
-            );
-        }
+        // SP 2: Memanggil Stored Procedure untuk Nonaktifkan Barang (Soft Delete)
+        DB::statement('CALL sp_nonaktifkan_barang(?)', [$id]);
 
         return redirect()->route('barang.index')
-            ->with('success', 'Barang berhasil dihapus.');
+            ->with('success', 'Barang berhasil dinonaktifkan (via SP).');
     }
 
     private function daftarSatuan()
@@ -110,14 +96,15 @@ class BarangController extends Controller
         return Satuan::where('status', 1)->orderBy('nama_satuan')->get();
     }
 
-    private function validasi(Request $request): array
+    private function validasi(Request $request, bool $baru): array
     {
         return $request->validate([
             'nama'     => ['required', 'string', 'max:45'],
             'jenis'    => ['required', Rule::in(array_keys(Barang::JENIS))],
             'idsatuan' => ['required', 'integer', 'exists:satuan,idsatuan'],
             'harga'    => ['required', 'integer', 'min:0'],
-            'status'   => ['required', Rule::in(['0', '1'])],
+            // Barang baru selalu aktif (diatur SP 1); status hanya diisi saat edit.
+            'status'   => $baru ? ['nullable'] : ['required', Rule::in(['0', '1'])],
         ]);
     }
 }

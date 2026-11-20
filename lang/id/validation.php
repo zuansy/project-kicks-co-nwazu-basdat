@@ -1,8 +1,11 @@
 <?php
 
 return [
+    'alpha_dash' => ':attribute hanya boleh berisi huruf, angka, strip (-), dan garis bawah (_).',
     'array'    => ':attribute harus berupa daftar.',
+    'confirmed' => 'Konfirmasi :attribute tidak cocok.',
     'distinct' => ':attribute tidak boleh dipilih dua kali.',
+    'email'    => ':attribute harus berupa alamat email yang valid.',
     'exists'   => ':attribute yang dipilih tidak valid.',
     'in'       => ':attribute yang dipilih tidak valid.',
     'integer'  => ':attribute harus berupa bilangan bulat.',
@@ -18,6 +21,7 @@ return [
     ],
     'required' => ':attribute wajib diisi.',
     'string'   => ':attribute harus berupa teks.',
+    'unique'   => ':attribute sudah dipakai.',
 
     'attributes' => [
         'nama'             => 'Nama barang',
@@ -25,6 +29,8 @@ return [
         'idsatuan'         => 'Satuan',
         'harga'            => 'Harga',
         'status'           => 'Status',
+        'login'            => 'Email atau username',
+        'email'            => 'Email',
         'username'         => 'Username',
         'password'         => 'Password',
         'vendor_idvendor'  => 'Vendor',
@@ -33,6 +39,17 @@ return [
         'item.*.jumlah'    => 'Jumlah',
         'item.*.harga'     => 'Harga satuan',
         'idpengadaan'      => 'Pengadaan',
+        'persen' => 'Persentase margin',
+        'nama_satuan' => 'Nama satuan',
+        'nama_vendor' => 'Nama vendor',
+        'badan_hukum' => 'Badan hukum',
+        'nama_role' => 'Nama role',
+        'idrole' => 'Role',
+        'harga.*' => 'Harga satuan terima',
+        'retur' => 'Jumlah retur',
+        'retur.*' => 'Jumlah retur',
+        'alasan' => 'Alasan retur',
+        'alasan.*' => 'Alasan retur',
         'terima'           => 'Jumlah diterima',
         'terima.*'         => 'Jumlah diterima',
     ],
